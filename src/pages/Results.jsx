@@ -1,41 +1,66 @@
-import { useLocation, useNavigate } from "react-router-dom";
-import { useState, useEffect } from "react";
+import { useInterview } from "../context/useInterview"
+import { useNavigate } from "react-router-dom"
+import { useState, useEffect } from "react"
+
+const EXPRESSION_LABELS = {         // ← outside component entirely
+  happy:     { emoji: "😊", label: "Confident",  color: "text-green-600"  },
+  neutral:   { emoji: "😐", label: "Calm",        color: "text-blue-600"   },
+  surprised: { emoji: "😮", label: "Surprised",   color: "text-yellow-600" },
+  fearful:   { emoji: "😰", label: "Nervous",     color: "text-orange-600" },
+  sad:       { emoji: "😟", label: "Uncertain",   color: "text-gray-600"   },
+  angry:     { emoji: "😤", label: "Tense",       color: "text-red-600"    },
+  disgusted: { emoji: "😑", label: "Disengaged",  color: "text-purple-600" },
+}
 
 export default function Results() {
-  const location = useLocation();
-  const navigate = useNavigate();
-  const { answers, role, difficulty } = location.state || {};
-
-  const [feedback, setFeedback] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null); // Added error state
+  const { answers, role, difficulty, expressionData } = useInterview()
+  const navigate = useNavigate()
+  const [feedback, setFeedback] = useState(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState(null)
 
   useEffect(() => {
-    if (answers) {
-      getFeedback();
-    }
-  }, []);
+    if (answers) getFeedback()
+  }, [])
+
+  // ← getExpressionSummary is here, inside component but outside getFeedback
+  function getExpressionSummary() {
+    if (!expressionData || expressionData.length === 0) return null
+    const counts = {}
+    expressionData.forEach((entry) => {
+      counts[entry.dominant] = (counts[entry.dominant] || 0) + 1
+    })
+    const overall = Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0]
+    const byQuestion = {}
+    expressionData.forEach((entry) => {
+      if (!byQuestion[entry.question]) byQuestion[entry.question] = []
+      byQuestion[entry.question].push(entry.dominant)
+    })
+    const perQuestion = Object.entries(byQuestion).map(([q, expressions]) => {
+      const freq = {}
+      expressions.forEach(e => freq[e] = (freq[e] || 0) + 1)
+      const dominant = Object.entries(freq).sort((a, b) => b[1] - a[1])[0][0]
+      return { question: Number(q), dominant }
+    })
+    return { overall, perQuestion, counts }
+  }
+
+  // ← expressionSummary is here, inside component but outside getFeedback
+  const expressionSummary = getExpressionSummary()
 
   async function getFeedback() {
-    setLoading(true);
-    setError(null); // Reset error state before fetching
+    setLoading(true)
+    setError(null)
 
     const answersText = answers
-      .map(
-        (item, i) =>
-          `Question ${i + 1}: ${item.question}\nAnswer: ${
-            item.answer || "No answer given"
-          }`
-      )
-      .join("\n\n");
+      .map((item, i) => `Question ${i + 1}: ${item.question}\nAnswer: ${item.answer || "No answer given"}`)
+      .join("\n\n")
 
     const prompt = `
       You are an expert interview coach. 
       The candidate interviewed for a ${role} role at ${difficulty} level.
-      
       Here are their answers:
       ${answersText}
-      
       Give feedback in this exact JSON format and nothing else:
       {
         "overallScore": <number from 0 to 100>,
@@ -48,54 +73,37 @@ export default function Results() {
           { "score": <0-10>, "feedback": "<one sentence feedback>" }
         ]
       }
-    `;
+    `
 
     try {
-      // Use standard Vite env variable for your project, with a fallback for preview environments
-      const apiKey = import.meta.env?.VITE_GEMINI_KEY || "";
-      
+      const apiKey = import.meta.env?.VITE_GEMINI_KEY || ""
       const response = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${apiKey}`,
         {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             contents: [{ parts: [{ text: prompt }] }],
-            generationConfig: {
-              // This forces Gemini to return standard JSON without markdown wrapping
-              responseMimeType: "application/json",
-            },
+            generationConfig: { responseMimeType: "application/json" },
           }),
         }
-      );
-
-      if (!response.ok) {
-        throw new Error(`API error! status: ${response.status}`);
-      }
-
-      const data = await response.json();
-      
-      // Extracting the text from Gemini's response structure
-      const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-      
-      if (!text) {
-        throw new Error("No text returned from API");
-      }
-
-      // Cleanup logic just in case the model ignores the mimeType config
-      const cleanedText = text.replace(/```json/g, "").replace(/```/g, "").trim();
-      const parsed = JSON.parse(cleanedText);
-      
-      setFeedback(parsed);
+      )
+      if (!response.ok) throw new Error(`API error! status: ${response.status}`)
+      const data = await response.json()
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text
+      if (!text) throw new Error("No text returned from API")
+      const cleanedText = text.replace(/```json/g, "").replace(/```/g, "").trim()
+      const parsed = JSON.parse(cleanedText)
+      setFeedback(parsed)
     } catch (err) {
-      console.error("API error:", err);
-      setError("We encountered an issue analyzing your answers. Please try again.");
+      console.error("API error:", err)
+      setError("We encountered an issue analyzing your answers. Please try again.")
     } finally {
-      setLoading(false);
+      setLoading(false)
     }
   }
+
+  // rest of your return JSX stays exactly the same
 
   if (!answers) {
     return (
@@ -198,6 +206,42 @@ export default function Results() {
                 </ul>
               </div>
             </div>
+
+                        {/* Expression Analysis */}
+            {expressionSummary && (
+              <div className="bg-white border border-gray-200 rounded-2xl p-6">
+                <h2 className="text-lg font-bold text-gray-800 mb-4">
+                  😶 Facial Expression Analysis
+                </h2>
+
+                {/* Overall */}
+                <div className="bg-gray-50 rounded-xl p-4 mb-4">
+                  <p className="text-sm text-gray-500 mb-1">Overall demeanour</p>
+                  <p className="text-xl font-bold">
+                    {EXPRESSION_LABELS[expressionSummary.overall]?.emoji}{" "}
+                    <span className={EXPRESSION_LABELS[expressionSummary.overall]?.color}>
+                      {EXPRESSION_LABELS[expressionSummary.overall]?.label || expressionSummary.overall}
+                    </span>
+                  </p>
+                </div>
+
+                {/* Per question */}
+                <div className="flex flex-col gap-2">
+                  {expressionSummary.perQuestion.map((item) => (
+                    <div key={item.question} className="flex items-center justify-between py-2 border-b border-gray-100">
+                      <p className="text-sm text-gray-600">Question {item.question}</p>
+                      <p className="font-semibold text-sm">
+                        {EXPRESSION_LABELS[item.dominant]?.emoji}{" "}
+                        <span className={EXPRESSION_LABELS[item.dominant]?.color}>
+                          {EXPRESSION_LABELS[item.dominant]?.label || item.dominant}
+                        </span>
+                      </p>
+                    </div>
+                  ))}
+                </div>
+
+              </div>
+            )}
 
             {/* Per question feedback */}
             <div className="flex flex-col gap-4">

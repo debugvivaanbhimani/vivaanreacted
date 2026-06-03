@@ -1,6 +1,9 @@
+import * as faceapi from "face-api.js"
+import { useInterview } from "../context/useInterview"
 import { useState, useEffect, useRef } from "react"
-import { useSearchParams, useNavigate } from "react-router-dom"
+import { useSearchParams, useNavigate, useLocation } from "react-router-dom"
 
+/*
 const QUESTIONS = {
   swe: {
     easy:   ["Tell me about yourself.", "What is a variable?", "What is the difference between HTML and CSS?"],
@@ -33,14 +36,13 @@ const QUESTIONS = {
     hard:   ["How would you redesign a company's hiring process?", "How do you handle a toxic high performer?", "Walk me through how you'd build a culture from scratch."],
   },
 }
+*/
 
-const TIMER_SECONDS = 60
+const TIMER_SECONDS = 120
 
 export default function Interview() {
-  const [searchParams] = useSearchParams()
+  const { role, difficulty, resumeText, setAnswers: saveAnswers, setExpressionData } = useInterview()
   const navigate = useNavigate()
-  const role = searchParams.get("role")
-  const difficulty = searchParams.get("difficulty")
 
   // ── STATE ────────────────────────────────────────────────
   const [currentIndex, setCurrentIndex] = useState(0)
@@ -48,11 +50,64 @@ export default function Interview() {
   const [answers, setAnswers] = useState([])
   const [timeLeft, setTimeLeft] = useState(TIMER_SECONDS)
   const [finished, setFinished] = useState(false)
+  const [isListening, setIsListening] = useState(false)
+  const [questions, setQuestions] = useState([])
+  const [loadingQuestions, setLoadingQuestions] = useState(true)
+  const videoRef = useRef(null)
+  const expressionLog = useRef([])   // stores expressions without re-rendering
+  const trackingRef = useRef(null) 
   const timerRef = useRef(null)
 
-  const questions = QUESTIONS[role]?.[difficulty] || []
   const currentQuestion = questions[currentIndex]
   const totalQuestions = questions.length
+
+
+
+useEffect(() => {
+  generateQuestions()
+}, [])
+
+async function generateQuestions() {
+  setLoadingQuestions(true)
+
+  const resumeContext = resumeText
+    ? `The candidate's resume: ${resumeText.slice(0, 2000)}`
+    : "No resume provided — use general questions for this role."
+
+  const prompt = `
+    You are an expert interviewer.
+    Generate exactly 3 interview questions for a ${role} role at ${difficulty} level.
+    ${resumeContext}
+    
+    Return ONLY a JSON array of 3 strings, nothing else:
+    ["question 1", "question 2", "question 3"]
+  `
+
+  try {
+    const apiKey = import.meta.env.VITE_GEMINI_KEY
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key=${apiKey}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: { responseMimeType: "application/json" },
+        }),
+      }
+    )
+    const data = await response.json()
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text
+    const parsed = JSON.parse(text)
+    setQuestions(parsed)
+  } catch (err) {
+    console.error("Question generation failed:", err)
+    // Fall back to hardcoded questions if AI fails
+    setQuestions(QUESTIONS[role]?.[difficulty] || [])
+  } finally {
+    setLoadingQuestions(false)
+  }
+}
 
   // ── CONCEPT: useEffect — runs the countdown timer ────────
   // Every time currentIndex changes (new question), 
@@ -75,23 +130,79 @@ export default function Interview() {
     return () => clearInterval(timerRef.current)
   }, [currentIndex])  // ← runs every time question changes
 
+
+  useEffect(() => {
+  async function startFaceTracking() {
+    try {
+      await faceapi.nets.tinyFaceDetector.loadFromUri("/models")
+      await faceapi.nets.faceExpressionNet.loadFromUri("/models")
+
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true })
+
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream
+        videoRef.current.play()
+      }
+
+      // Sample expressions every 3 seconds
+      trackingRef.current = setInterval(async () => {
+        if (!videoRef.current) return
+
+        const detection = await faceapi
+          .detectSingleFace(videoRef.current, new faceapi.TinyFaceDetectorOptions())
+          .withFaceExpressions()
+
+        if (detection) {
+          const expressions = detection.expressions
+          const dominant = Object.entries(expressions)
+            .sort((a, b) => b[1] - a[1])[0][0]  // get highest scoring expression
+
+          expressionLog.current.push({
+            time: Date.now(),
+            question: currentIndex + 1,
+            dominant,
+            scores: expressions,
+          })
+        }
+      }, 3000)
+
+    } catch (err) {
+      console.log("Face tracking unavailable:", err)
+      // Silently fails — interview still works without camera
+    }
+  }
+
+  startFaceTracking()
+
+  return () => {
+    clearInterval(trackingRef.current)
+    // Stop camera when leaving page
+    if (videoRef.current?.srcObject) {
+      videoRef.current.srcObject.getTracks().forEach(t => t.stop())
+    }
+  }
+}, [])
+
   // ── CONCEPT: useRef — stores timer ID ───────────────────
   // timerRef holds the interval ID so we can clear it.
   // We use useRef not useState because changing it
   // shouldn't trigger a re-render.
 
   function handleNext() {
-    const newAnswers = [...answers, { question: currentQuestion, answer }]
-    setAnswers(newAnswers)
-    setAnswer("")
+  const newAnswers = [...answers, { question: currentQuestion, answer }]
+  setAnswers(newAnswers)
+  setAnswer("")
 
-    if (currentIndex + 1 >= totalQuestions) {
-      clearInterval(timerRef.current)
-      navigate("/results", { state: { answers: newAnswers, role, difficulty } })
-    } else {
-      setCurrentIndex(currentIndex + 1)
-    }
+  if (currentIndex + 1 >= totalQuestions) {
+    clearInterval(timerRef.current)
+    clearInterval(trackingRef.current)          // ← stop tracking
+    saveAnswers(newAnswers)
+    setExpressionData(expressionLog.current)    // ← save to context
+    navigate("/results")
+  } else {
+    setCurrentIndex(currentIndex + 1)
   }
+}
 
   const timerColor = timeLeft > 30
     ? "text-green-500"
@@ -99,6 +210,49 @@ export default function Interview() {
     ? "text-yellow-500"
     : "text-red-500"
 
+  
+
+function startListening() {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
+
+  if (!SpeechRecognition) {
+    alert("Your browser doesn't support voice input. Use Chrome or Safari.")
+    return
+  }
+
+  const recognition = new SpeechRecognition()
+  recognition.lang = "en-US"
+  recognition.continuous = false       // stops after one sentence
+  recognition.interimResults = false   // only return final result
+
+  recognition.onstart = () => setIsListening(true)
+  recognition.onend = () => setIsListening(false)
+
+  recognition.onresult = (e) => {
+    const transcript = e.results[0][0].transcript
+    setAnswer((prev) => prev + " " + transcript)  // appends to existing answer
+  }
+
+  recognition.onerror = (e) => {
+    console.error("Speech error:", e.error)
+    setIsListening(false)
+  }
+
+  recognition.start()
+}  
+
+if (loadingQuestions) {
+  return (
+    <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <div className="text-center">
+        <div className="text-5xl mb-4">🤖</div>
+        <p className="text-gray-600 font-semibold text-lg">
+          {resumeText ? "Personalising questions from your resume..." : "Generating questions..."}
+        </p>
+      </div>
+    </div>
+  )
+}
   return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center px-6">
       <div className="bg-white rounded-2xl shadow-sm border border-gray-200 w-full max-w-2xl p-8">
@@ -137,13 +291,32 @@ export default function Interview() {
         </div>
 
         {/* Answer input */}
+        <div className="relative mb-6">
         <textarea
           value={answer}
           onChange={(e) => setAnswer(e.target.value)}
-          placeholder="Type your answer here..."
+            placeholder={isListening ? "Listening... speak now 🎙️" : "Type your answer or use the mic below..."}
           rows={5}
-          className="w-full border border-gray-200 rounded-xl p-4 text-gray-800 text-sm resize-none outline-none focus:border-blue-400 mb-6"
+          className={`w-full border rounded-xl p-4 text-gray-800 text-sm resize-none outline-none transition-all ${
+            isListening
+            ? "border-red-400 bg-red-50"
+            : "border-gray-200 focus:border-blue-400"
+          }`}
         />
+        </div>
+
+          {/* Mic button */}
+          <button
+            onClick={startListening}
+            disabled={isListening}
+            className={`w-full py-3 rounded-xl font-bold mb-3 transition-all ${
+              isListening
+                ? "bg-red-100 text-red-500 border-2 border-red-300 cursor-not-allowed"
+                : "bg-gray-100 hover:bg-gray-200 text-gray-700 border-2 border-gray-200"
+            }`}
+          >
+            {isListening ? "🎙️ Listening... speak now" : "🎤 Tap to speak answer"}
+          </button>
 
         {/* Next button */}
         <button
@@ -152,7 +325,14 @@ export default function Interview() {
         >
           {currentIndex + 1 === totalQuestions ? "Finish Interview →" : "Next Question →"}
         </button>
-
+         {/* Hidden camera — user can't see it but face-api reads from it */}
+        <video
+          ref={videoRef}
+          autoPlay
+          muted
+          playsInline
+          style={{ display: "none" }}
+        />   
       </div>
     </div>
   )
