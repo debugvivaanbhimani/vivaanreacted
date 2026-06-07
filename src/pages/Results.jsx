@@ -59,6 +59,9 @@ export default function Results() {
     const prompt = `
       You are an expert interview coach. 
       The candidate interviewed for a ${role} role at ${difficulty} level.
+      Evaluate the answers similar to how some professional interviewer would do or expect.
+      You can base your evaluation on how people previously have been interviewed and shared their experience on the web
+      It should be very insightful for the person taking the interview and not a mere formality
       Here are their answers:
       ${answersText}
       Give feedback in this exact JSON format and nothing else:
@@ -128,7 +131,7 @@ export default function Results() {
         <div className="text-center mb-10">
           <div className="text-5xl mb-4">🎯</div>
           <h1 className="text-3xl font-bold text-gray-800 mb-2">
-            Interview Complete
+            Insights from your interview:
           </h1>
           <p className="text-gray-500">
             {role} · {difficulty} · {answers.length} questions answered
@@ -140,7 +143,7 @@ export default function Results() {
           <div className="bg-white border border-gray-200 rounded-2xl p-8 text-center mb-8 shadow-sm">
             <div className="text-3xl mb-3 animate-pulse">🤖</div>
             <p className="text-gray-500 font-medium">
-              AI is analyzing your answers...
+              We are analyzing your answers...
             </p>
           </div>
         )}
@@ -186,7 +189,7 @@ export default function Results() {
             {/* Strengths and improvements */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="bg-green-50 border border-green-200 rounded-2xl p-5 shadow-sm">
-                <h3 className="font-bold text-green-800 mb-3">✅ Strengths</h3>
+                <h3 className="font-bold text-green-800 mb-3">Strengths</h3>
                 <ul className="flex flex-col gap-2">
                   {feedback.strengths.map((s, i) => (
                     <li key={i} className="text-green-700 text-sm">
@@ -196,7 +199,7 @@ export default function Results() {
                 </ul>
               </div>
               <div className="bg-orange-50 border border-orange-200 rounded-2xl p-5 shadow-sm">
-                <h3 className="font-bold text-orange-800 mb-3">📈 Improve</h3>
+                <h3 className="font-bold text-orange-800 mb-3">Scope for improvement</h3>
                 <ul className="flex flex-col gap-2">
                   {feedback.improvements.map((imp, i) => (
                     <li key={i} className="text-orange-700 text-sm">
@@ -211,7 +214,7 @@ export default function Results() {
             {expressionSummary && (
               <div className="bg-white border border-gray-200 rounded-2xl p-6">
                 <h2 className="text-lg font-bold text-gray-800 mb-4">
-                  😶 Facial Expression Analysis
+                  Facial Expression Analysis
                 </h2>
 
                 {/* Overall */}
@@ -282,7 +285,7 @@ export default function Results() {
                   {feedback.questionFeedback[index] && (
                     <div className="bg-blue-50 rounded-xl p-4 border border-blue-100">
                       <p className="text-xs text-blue-500 mb-2 font-medium uppercase">
-                        AI Feedback
+                        Feedback from our side
                       </p>
                       <p className="text-blue-800 text-sm leading-relaxed">
                         {feedback.questionFeedback[index].feedback}

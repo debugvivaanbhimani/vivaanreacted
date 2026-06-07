@@ -77,6 +77,8 @@ async function generateQuestions() {
   const prompt = `
     You are an expert interviewer.
     Generate exactly 3 interview questions for a ${role} role at ${difficulty} level.
+    The questions should be similar to what one would face in a real interview of such type
+    and so you may include previously asked questions for such roles available online
     ${resumeContext}
     
     Return ONLY a JSON array of 3 strings, nothing else:
